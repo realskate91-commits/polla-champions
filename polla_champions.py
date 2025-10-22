@@ -1,129 +1,79 @@
-"""
-Polla Champions - Versión con datos reales desde la API Football-Data.org
-"""
-
-from typing import Dict, List
-import sys
-import requests
+import streamlit as st
 import pandas as pd
+import requests
+from rapidfuzz import process
 
-# Intentar importar streamlit; si no existe, seguimos en modo consola
-USE_STREAMLIT = True
-try:
-    import streamlit as st
-except Exception:
-    st = None
-    USE_STREAMLIT = False
+st.title("🏆 Polla Champions League – Puntajes en vivo")
 
+st.caption("Fuente de datos: Football-Data.org / UEFA")
 
-# --- CONFIGURACIÓN ---
-API_KEY = "b9bd06dcfcd84b9781783e84613c76f5"  # 👈 Pega aquí tu clave de football-data.org
-COMPETITION_ID = "2001"  # Champions League
+# ======= CONFIGURACIÓN =======
+API_URL = "https://api.football-data.org/v4/competitions/CL/standings"
+API_KEY = st.secrets["FOOTBALL_DATA_API_KEY"] if "FOOTBALL_DATA_API_KEY" in st.secrets else "YOUR_API_KEY_HERE"
 
-JUGADORES: Dict[str, List[str]] = {
-    "Daniela": ["Napoli", "Paris Saint-Germain"],
-    "Carlos": ["Bayern München", "Inter"],
-    "Andrés": ["Atlético de Madrid", "Juventus"],
-    "Bryan": ["Marseille", "Newcastle United"],
-    "Nicolás": ["Chelsea", "Tottenham Hotspur"],
-    "Diego": ["Borussia Dortmund", "Atalanta"],
-    "Lina": ["Manchester City", "Galatasaray"],
-    "Felipe": ["Benfica", "Real Madrid"],
-    "Giovany": ["Arsenal", "Liverpool"],
-    "Renzo": ["Barcelona", "Eintracht Frankfurt"]
+headers = {"X-Auth-Token": API_KEY}
+
+# ======= DATOS DE LOS PARTICIPANTES =======
+data = {
+    "Jugador": [
+        "Diego", "Renzo", "Carlos", "Daniela", "Bryan",
+        "Andrés", "Nicolás", "Lina", "Felipe", "Giovany"
+    ],
+    "Equipos": [
+        ["Borussia Dortmund", "Atalanta"],
+        ["Barcelona", "Eintracht Frankfurt"],
+        ["Bayern München", "Inter"],
+        ["Napoli", "Paris Saint-Germain"],
+        ["Marseille", "Newcastle United"],
+        ["Atlético de Madrid", "Juventus"],
+        ["Chelsea", "Tottenham Hotspur"],
+        ["Manchester City", "Galatasaray"],
+        ["Benfica", "Real Madrid"],
+        ["Arsenal", "Liverpool"]
+    ]
 }
 
+df = pd.DataFrame(data)
 
-# --- FUNCIONES ---
+# ======= OBTENER CLASIFICACIÓN ACTUAL =======
+resp = requests.get(API_URL, headers=headers)
 
-def norm(s: str) -> str:
-    """Normaliza nombre para comparación."""
-    import re
-    return re.sub(r"\W+", "", s).lower()
+if resp.status_code != 200:
+    st.error("No se pudo obtener la información de la UEFA (verifica tu API key o el límite de uso).")
+else:
+    standings = resp.json()
+    teams_info = {}
+    corrections = []
 
+    for group in standings["standings"]:
+        for t in group["table"]:
+            teams_info[t["team"]["name"]] = t["points"]
 
-def obtener_tabla_uefa_api(api_key: str) -> pd.DataFrame:
-    """Obtiene standings de la Champions desde la API oficial."""
-    url = f"https://api.football-data.org/v4/competitions/{COMPETITION_ID}/standings"
-    headers = {"X-Auth-Token": api_key}
-    r = requests.get(url, headers=headers, timeout=15)
-    if r.status_code != 200:
-        raise Exception(f"Error {r.status_code}: {r.text}")
+    # Lista real de nombres de equipos
+    official_names = list(teams_info.keys())
 
-    data = r.json()
-    rows = []
-    for group in data.get("standings", []):
-        for team in group.get("table", []):
-            rows.append({
-                "Team": team["team"]["name"],
-                "Pts": team["points"]
-            })
-    df = pd.DataFrame(rows)
-    df = df.drop_duplicates(subset=["Team"])
-    return df
-
-
-def calcular_ranking(standings_df: pd.DataFrame, jugadores: Dict[str, List[str]]) -> pd.DataFrame:
-    lookup = {norm(row.Team): int(row.Pts) for _, row in standings_df.iterrows()}
-    resultados = []
-    for jugador, equipos in jugadores.items():
-        total = 0
-        detalles = []
-        for eq in equipos:
-            pts = lookup.get(norm(eq))
-            if pts is None:
-                detalles.append(f"{eq}: ❌")
+    # ======= CALCULAR PUNTAJES =======
+    total_points = []
+    for _, row in df.iterrows():
+        equipos = row["Equipos"]
+        puntos = 0
+        for team in equipos:
+            if team in teams_info:
+                puntos += teams_info[team]
             else:
-                total += pts
-                detalles.append(f"{eq}: {pts} pts")
-        resultados.append({
-            "Jugador": jugador,
-            "Equipos": " | ".join(detalles),
-            "Total Pts": total
-        })
-    return pd.DataFrame(resultados).sort_values(by="Total Pts", ascending=False).reset_index(drop=True)
+                match, score, _ = process.extractOne(team, official_names)
+                if score > 70:
+                    puntos += teams_info[match]
+                    corrections.append(f"🔹 '{team}' → '{match}' ({int(score)}%)")
+                else:
+                    corrections.append(f"⚠️ '{team}' no encontrado")
+        total_points.append(puntos)
 
+    df["Total Pts"] = total_points
 
-def run_streamlit_app(standings_df: pd.DataFrame, ranking_df: pd.DataFrame) -> None:
-    st.set_page_config(page_title="Polla Champions", page_icon="⚽", layout="wide")
-    st.title("⚽ Polla Millonaria - Champions League")
-    st.markdown("Ranking actualizado automáticamente (fuente: Football-Data.org)")
+    st.dataframe(df.sort_values("Total Pts", ascending=False), use_container_width=True)
 
-    with st.expander("Tabla de posiciones actual (Champions)"):
-        st.dataframe(standings_df.sort_values('Pts', ascending=False), use_container_width=True)
-
-    st.subheader("Ranking de la polla 🏆")
-    st.dataframe(ranking_df, use_container_width=True)
-
-    st.caption("Fuente de datos: Football-Data.org / UEFA")
-
-
-def run_console(standings_df: pd.DataFrame, ranking_df: pd.DataFrame) -> None:
-    print("Standings actuales (Champions):")
-    print(standings_df.sort_values('Pts', ascending=False).head(10).to_string(index=False))
-    print("\nRanking de la polla:")
-    print(ranking_df.to_string(index=False))
-    ranking_df.to_csv("ranking.csv", index=False)
-    print("\nRanking guardado en 'ranking.csv'")
-
-
-# --- MAIN ---
-
-def main():
-    try:
-        standings = obtener_tabla_uefa_api(API_KEY)
-        source = "Football-Data.org"
-    except Exception as e:
-        print(f"❌ Error al obtener standings: {e}")
-        sys.exit(1)
-
-    ranking = calcular_ranking(standings, JUGADORES)
-
-    if USE_STREAMLIT and st is not None:
-        run_streamlit_app(standings, ranking)
-    else:
-        run_console(standings, ranking)
-
-
-if __name__ == "__main__":
-    main()
+    if corrections:
+        st.subheader("🧩 Ajustes automáticos / Avisos")
+        for c in corrections:
+            st.write(c)
