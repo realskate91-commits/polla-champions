@@ -2,141 +2,116 @@ import streamlit as st
 import pandas as pd
 import requests
 
-# ==============================
-# CONFIGURACIÓN GENERAL
-# ==============================
+# --------------------------------------------------------
+# CONFIGURACIÓN
+# --------------------------------------------------------
+API_KEY = "b9bd06dcfcd84b9781783e84613c76f5"  # ⚠️ Reemplaza con tu clave válida de football-data.org
+USE_STREAMLIT = True
 
-st.set_page_config(page_title="Polla Champions League", page_icon="🏆", layout="wide")
+# Lista de equipos de tu polla
+EQUIPOS_ELEGIDOS = [
+    "Borussia Dortmund", "Atalanta", "Barcelona", "Eintracht Frankfurt",
+    "Bayern München", "Inter", "Napoli", "Paris Saint-Germain",
+    "Marseille", "Newcastle United", "Atlético de Madrid", "Juventus",
+    "Chelsea", "Tottenham Hotspur", "Manchester City", "Galatasaray",
+    "Benfica", "Real Madrid", "Arsenal", "Liverpool"
+]
 
-st.title("🏆 Polla Champions League – Puntajes en vivo")
-st.caption("Fuente de datos: Football-Data.org / UEFA")
-
-# 👉 Ingresa tu API Key de Football-Data.org aquí
-API_KEY = "b9bd06dcfcd84b9781783e84613c76f5"
-
-# Equipos seleccionados por cada jugador
-JUGADORES = {
-    "Daniela": ["Napoli", "Paris Saint-Germain"],
-    "Carlos": ["Bayern München", "Inter"],
-    "Andrés": ["Atlético de Madrid", "Juventus"],
-    "Bryan": ["Marseille", "Newcastle United"],
-    "Nicolás": ["Chelsea", "Tottenham Hotspur"],
-    "Diego": ["Borussia Dortmund", "Atalanta"],
-    "Lina": ["Manchester City", "Galatasaray"],
-    "Felipe": ["Benfica", "Real Madrid"],
-    "Giovany": ["Arsenal", "Liverpool"],
-    "Renzo": ["Barcelona", "Eintracht Frankfurt"]
-}
-
-
-# ==============================
-# FUNCIONES AUXILIARES
-# ==============================
-
-def obtener_tabla_uefa(api_key: str) -> pd.DataFrame:
-    """Obtiene los standings actuales de la Champions desde la API."""
+# --------------------------------------------------------
+# FUNCIÓN: Obtener posiciones de la UEFA Champions
+# --------------------------------------------------------
+@st.cache_data(ttl=3600)
+def obtener_tabla_posiciones():
     url = "https://api.football-data.org/v4/competitions/CL/standings"
-    headers = {"X-Auth-Token": api_key}
-    r = requests.get(url, headers=headers, timeout=15)
+    headers = {"X-Auth-Token": API_KEY}
 
-    if r.status_code != 200:
-        raise Exception(f"Error al consultar la API (HTTP {r.status_code})")
+    response = requests.get(url, headers=headers)
+    if response.status_code != 200:
+        return None
 
-    data = r.json()
-    rows = []
+    data = response.json()
+    equipos = []
+    for grupo in data["standings"]:
+        for team in grupo["table"]:
+            nombre = team["team"]["name"]
+            if nombre in EQUIPOS_ELEGIDOS:
+                equipos.append({
+                    "Grupo": grupo["group"],
+                    "Equipo": nombre,
+                    "PJ": team["playedGames"],
+                    "PG": team["won"],
+                    "PE": team["draw"],
+                    "PP": team["lost"],
+                    "GF": team["goalsFor"],
+                    "GC": team["goalsAgainst"],
+                    "Dif. Goles": team["goalDifference"],
+                    "Pts": team["points"]
+                })
 
-    for group in data["standings"]:
-        for team in group["table"]:
-            rows.append({
-                "Grupo": group["group"].replace("GROUP_", ""),
-                "Equipo": team["team"]["name"],
-                "PJ": team["playedGames"],
-                "PG": team["won"],
-                "PE": team["draw"],
-                "PP": team["lost"],
-                "GF": team["goalsFor"],
-                "GC": team["goalsAgainst"],
-                "Dif. Goles": team["goalDifference"],
-                "Pts": team["points"]
-            })
+    df = pd.DataFrame(equipos)
 
-    df = pd.DataFrame(rows)
+    # Ordenar como UEFA
+    df = df.sort_values(by=["Pts", "Dif. Goles", "GF"], ascending=[False, False, False]).reset_index(drop=True)
     return df
 
+# --------------------------------------------------------
+# FUNCIÓN: Calcular puntos por jugador
+# --------------------------------------------------------
+def calcular_puntajes_jugadores(df_posiciones):
+    jugadores_data = [
+        {"Jugador": "Diego", "Equipos": ["Borussia Dortmund", "Atalanta"]},
+        {"Jugador": "Renzo", "Equipos": ["Barcelona", "Eintracht Frankfurt"]},
+        {"Jugador": "Carlos", "Equipos": ["Bayern München", "Inter"]},
+        {"Jugador": "Daniela", "Equipos": ["Napoli", "Paris Saint-Germain"]},
+        {"Jugador": "Bryan", "Equipos": ["Marseille", "Newcastle United"]},
+        {"Jugador": "Andrés", "Equipos": ["Atlético de Madrid", "Juventus"]},
+        {"Jugador": "Nicolás", "Equipos": ["Chelsea", "Tottenham Hotspur"]},
+        {"Jugador": "Lina", "Equipos": ["Manchester City", "Galatasaray"]},
+        {"Jugador": "Felipe", "Equipos": ["Benfica", "Real Madrid"]},
+        {"Jugador": "Giovany", "Equipos": ["Arsenal", "Liverpool"]},
+    ]
 
-def calcular_ranking(standings_df: pd.DataFrame, jugadores: dict) -> pd.DataFrame:
-    """Calcula el puntaje total por jugador basado en los standings."""
-    puntos = {row["Equipo"]: row["Pts"] for _, row in standings_df.iterrows()}
+    resultados = []
+    for jugador in jugadores_data:
+        total_puntos = 0
+        equipos_detalle = []
+        for equipo in jugador["Equipos"]:
+            fila = df_posiciones[df_posiciones["Equipo"] == equipo]
+            if not fila.empty:
+                pts = fila.iloc[0]["Pts"]
+                total_puntos += pts
+                equipos_detalle.append(f"{equipo}: {pts} pts")
+            else:
+                equipos_detalle.append(f"{equipo}: 0 pts ❌")
 
-    ranking = []
-    for jugador, equipos in jugadores.items():
-        total = 0
-        detalle = []
-        for eq in equipos:
-            pts = puntos.get(eq, 0)
-            total += pts
-            detalle.append(f"{eq}: {pts} pts")
-        ranking.append({
-            "Jugador": jugador,
-            "Equipos": " | ".join(detalle),
-            "Total Pts": total
+        resultados.append({
+            "Jugador": jugador["Jugador"],
+            "Equipos": " | ".join(equipos_detalle),
+            "Total Pts": total_puntos
         })
 
-    df_ranking = pd.DataFrame(ranking).sort_values(by="Total Pts", ascending=False).reset_index(drop=True)
-    return df_ranking
+    df_jugadores = pd.DataFrame(resultados)
+    df_jugadores = df_jugadores.sort_values(by="Total Pts", ascending=False).reset_index(drop=True)
+    return df_jugadores
 
+# --------------------------------------------------------
+# INTERFAZ STREAMLIT
+# --------------------------------------------------------
+if USE_STREAMLIT:
+    st.set_page_config(page_title="Polla Champions League", page_icon="🏆", layout="wide")
 
-# ==============================
-# MENÚ PRINCIPAL
-# ==============================
+    st.title("🏆 Polla Champions League – Puntajes en vivo")
+    st.caption("Fuente de datos: Football-Data.org / UEFA")
 
-st.sidebar.title("⚽ Menú principal")
-seccion = st.sidebar.radio(
-    "Selecciona una vista:",
-    ["Tabla de posiciones (equipos)", "Puntajes por jugador"]
-)
+    df_posiciones = obtener_tabla_posiciones()
+    if df_posiciones is None or df_posiciones.empty:
+        st.error("No se pudo obtener la información de la UEFA (verifica tu API key o el límite de uso).")
+    else:
+        # Tabla de posiciones
+        st.subheader("🏆 Tabla de posiciones (equipos elegidos)")
+        st.dataframe(df_posiciones, use_container_width=True)
 
-
-# ==============================
-# SECCIÓN: TABLA DE POSICIONES
-# ==============================
-
-if seccion == "Tabla de posiciones (equipos)":
-    st.header("🏆 Tabla de posiciones (equipos elegidos)")
-
-    try:
-        standings_df = obtener_tabla_uefa(API_KEY)
-
-        # Filtrar solo equipos elegidos
-        equipos_elegidos = sorted({e for lista in JUGADORES.values() for e in lista})
-        standings_df = standings_df[standings_df["Equipo"].isin(equipos_elegidos)]
-
-        # Ordenar por puntos y diferencia de goles
-        standings_df = standings_df.sort_values(
-            by=["Pts", "Dif. Goles"], ascending=False
-        ).reset_index(drop=True)
-
-        st.dataframe(standings_df, hide_index=True, use_container_width=True)
-
-    except Exception as e:
-        st.error(f"No se pudo obtener la información de la UEFA (verifica tu API key o límite de uso).")
-        st.caption(f"Detalles técnicos: {e}")
-
-
-# ==============================
-# SECCIÓN: PUNTAJES POR JUGADOR
-# ==============================
-
-elif seccion == "Puntajes por jugador":
-    st.header("👤 Puntajes por jugador")
-
-    try:
-        standings_df = obtener_tabla_uefa(API_KEY)
-        ranking_df = calcular_ranking(standings_df, JUGADORES)
-
-        st.dataframe(ranking_df, hide_index=True, use_container_width=True)
-        st.caption("Fuente de datos: Football-Data.org / UEFA")
-
-    except Exception as e:
-        st.error(f"No se pudo obtener la información de la UEFA (verifica tu API key o límite de uso).")
-        st.caption(f"Detalles técnicos: {e}")
+        # Tabla de jugadores
+        st.subheader("👥 Puntajes por jugador")
+        df_jugadores = calcular_puntajes_jugadores(df_posiciones)
+        st.dataframe(df_jugadores, use_container_width=True)
