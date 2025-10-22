@@ -9,7 +9,7 @@ st.caption("Fuente de datos: Football-Data.org / UEFA")
 
 # ======= CONFIGURACIÓN =======
 API_URL = "https://api.football-data.org/v4/competitions/CL/standings"
-API_KEY = st.secrets["FOOTBALL_DATA_API_KEY"] if "FOOTBALL_DATA_API_KEY" in st.secrets else "YOUR_API_KEY_HERE"
+API_KEY = st.secrets["FOOTBALL_DATA_API_KEY"] if "FOOTBALL_DATA_API_KEY" in st.secrets else "b9bd06dcfcd84b9781783e84613c76f5"
 
 headers = {"X-Auth-Token": API_KEY}
 
