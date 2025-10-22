@@ -12,7 +12,7 @@ st.title("🏆 Polla Champions League – Puntajes en vivo")
 st.caption("Fuente de datos: Football-Data.org / UEFA")
 
 # 👉 Ingresa tu API Key de Football-Data.org aquí
-API_KEY = "TU_API_KEY_AQUI"
+API_KEY = "b9bd06dcfcd84b9781783e84613c76f5"
 
 # Equipos seleccionados por cada jugador
 JUGADORES = {
