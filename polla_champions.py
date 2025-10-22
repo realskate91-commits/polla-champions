@@ -227,6 +227,17 @@ def main():
 
     ranking_df, corrections = calcular_ranking(standings_df, JUGADORES)
 
+    # Filtrar la tabla de posiciones solo para los equipos elegidos por los jugadores
+equipos_elegidos = sorted({e for lista in JUGADORES.values() for e in lista})
+# intentamos emparejar los nombres oficiales con fuzzy match
+equipos_filtrados = []
+for e in equipos_elegidos:
+    match, score = best_match(e, standings_df["Team"].tolist())
+    if match and score > 60:
+        equipos_filtrados.append(match)
+standings_df = standings_df[standings_df["Team"].isin(equipos_filtrados)].reset_index(drop=True)
+
+
     if USE_STREAMLIT and st is not None:
         run_streamlit(standings_df, ranking_df, corrections)
     else:
