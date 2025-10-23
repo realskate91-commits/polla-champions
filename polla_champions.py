@@ -182,23 +182,43 @@ def calcular_ranking(standings_df: pd.DataFrame, jugadores: Dict[str, List[str]]
 # --------------------------
 # INTERFAZ STREAMLIT
 # --------------------------
-def run_streamlit(standings_df: pd.DataFrame, ranking_df: pd.DataFrame, corrections: List[str]) -> None:
+# --------------------------
+# INTERFAZ STREAMLIT (modificada)
+# --------------------------
+def run_streamlit(standings_df: pd.DataFrame, ranking_df: pd.DataFrame, corrections: list) -> None:
     st.set_page_config(page_title="Polla Champions", page_icon="🏆", layout="wide")
     st.markdown("<h1 style='margin-bottom:0.2rem;'>🏆 Polla Champions League — Puntajes en vivo</h1>", unsafe_allow_html=True)
+
+    # Numeración desde 1 para ambas tablas
+    standings_display = standings_df.copy()
+    standings_display.insert(0, "#", range(1, len(standings_display) + 1))
+
+    ranking_display = ranking_df.copy()
+    ranking_display.insert(0, "#", range(1, len(ranking_display) + 1))
 
     col1, col2 = st.columns([2, 1])
     with col1:
         st.subheader("📋 Tabla de posiciones (equipos)")
-        st.dataframe(standings_df.sort_values(["Pts", "Dif. Goles"], ascending=[False, False]).reset_index(drop=True), use_container_width=True)
+        st.dataframe(
+            standings_display.sort_values(["Pts", "Dif. Goles"], ascending=[False, False]),
+            use_container_width=True,
+            height=400
+        )
     with col2:
         st.subheader("🏅 Ranking de la polla (por persona)")
-        st.dataframe(ranking_df, use_container_width=True)
+        st.dataframe(
+            ranking_display,
+            use_container_width=True,
+            height=400
+        )
 
-   # if corrections:
-   #     st.markdown("---")
-   #     st.subheader("🛠️ Ajustes automáticos / Avisos")
-   #     for c in corrections:
-   #         st.write("• " + c)
+    # Eliminamos sección de ajustes automáticos
+    # if corrections:
+    #     st.markdown("---")
+    #     st.subheader("🛠️ Ajustes automáticos / Avisos")
+    #     for c in corrections:
+    #         st.write("• " + c)
+
 
 # --------------------------
 # MAIN
