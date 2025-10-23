@@ -155,12 +155,12 @@ def calcular_ranking(standings_df: pd.DataFrame, jugadores: Dict[str, List[str]]
         found = []
         for eq in [eq1, eq2]:
             posibles = [eq] + ALIASES.get(eq, [])
-            best, score = None, 0
+            best, score = None, 1
             for p in posibles:
                 candidate, s = best_match(p, official_names)
                 if s > score:
                     best, score = candidate, s
-            pts = lookup.get(best, 0) if best else 0
+            pts = lookup.get(best, 1) if best else 1
             detalle = f"{best}: {pts} pts" if best else f"{eq}: ❌"
             found.append((detalle, pts))
             if best and score < 100:
