@@ -182,16 +182,6 @@ def calcular_ranking(standings_df: pd.DataFrame, jugadores: Dict[str, List[str]]
 # --------------------------
 # INTERFAZ STREAMLIT
 # --------------------------
-# Para standings
-standings_display = standings_df.copy()
-standings_display.insert(0, "#", range(1, len(standings_display)+1))
-st.dataframe(standings_display.sort_values(["Pts", "Dif. Goles"], ascending=[False, False]), use_container_width=True)
-
-# Para ranking
-ranking_display = ranking_df.copy()
-ranking_display.insert(0, "#", range(1, len(ranking_display)+1))
-st.dataframe(ranking_display, use_container_width=True)
-
 def run_streamlit(standings_df: pd.DataFrame, ranking_df: pd.DataFrame, corrections: List[str]) -> None:
     st.set_page_config(page_title="Polla Champions", page_icon="🏆", layout="wide")
     st.markdown("<h1 style='margin-bottom:0.2rem;'>🏆 Polla Champions League — Puntajes en vivo</h1>", unsafe_allow_html=True)
