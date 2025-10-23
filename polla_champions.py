@@ -1,19 +1,23 @@
 """
-Polla Champions - versión final
-- Página única: Tabla de posiciones (solo equipos elegidos) + Puntajes por persona
-- Orden UEFA: Pts -> Dif. Goles -> GF
-- Usa football-data.org (api_key en st.secrets["football_data"]["api_key"])
-- Usa rapidfuzz para matching tolerante (si está disponible)
+Polla Champions - versión combinada (equipos + ranking por persona) con alias de nombres corregidos
+Requiere: streamlit, pandas, requests, rapidfuzz
 """
 
 from typing import Dict, List, Tuple, Optional
+import sys
 import re
 import requests
 import pandas as pd
 
-import streamlit as st
+# Intentar importar streamlit; si no existe, seguimos en modo consola
+USE_STREAMLIT = True
+try:
+    import streamlit as st
+except Exception:
+    st = None
+    USE_STREAMLIT = False
 
-# rapidfuzz para fuzzy matching (opcional)
+# rapidfuzz para fuzzy matching
 try:
     from rapidfuzz import process, fuzz
 except Exception:
@@ -21,27 +25,15 @@ except Exception:
     fuzz = None
 
 # --------------------------
-# CONFIG
+# CONFIGURACIÓN
 # --------------------------
-st.set_page_config(page_title="Polla Champions League", page_icon="🏆", layout="wide")
-
-# API key desde Streamlit secrets
 API_KEY = None
-if "football_data" in st.secrets and "api_key" in st.secrets["football_data"]:
-    API_KEY = st.secrets["football_data"]["api_key"]
+if USE_STREAMLIT and st is not None:
+    API_KEY = st.secrets["football_data"]["api_key"] if "football_data" in st.secrets and "api_key" in st.secrets["football_data"] else None
 
 COMPETITION_ID = "2001"  # Champions League
 
-# Equipos elegidos (los 20 que me diste)
-EQUIPOS_ELEGIDOS = [
-    "Borussia Dortmund", "Atalanta", "Barcelona", "Eintracht Frankfurt",
-    "Bayern München", "Inter", "Napoli", "Paris Saint-Germain",
-    "Marseille", "Newcastle United", "Atlético de Madrid", "Juventus",
-    "Chelsea", "Tottenham Hotspur", "Manchester City", "Galatasaray",
-    "Benfica", "Real Madrid", "Arsenal", "Liverpool"
-]
-
-# Participantes y sus dos equipos (mantengo tu lista original)
+# Participantes y equipos
 JUGADORES: Dict[str, List[str]] = {
     "Daniela": ["Napoli", "Paris Saint-Germain"],
     "Carlos": ["Bayern München", "Inter"],
@@ -55,34 +47,45 @@ JUGADORES: Dict[str, List[str]] = {
     "Renzo": ["Barcelona", "Eintracht Frankfurt"]
 }
 
+# Alias para mejorar el reconocimiento de nombres
+ALIASES = {
+    "Inter": ["FC Internazionale Milano", "Internazionale", "Inter Milan"],
+    "Marseille": ["Olympique de Marseille", "OM"],
+    "Benfica": ["SL Benfica", "S.L. Benfica"],
+    "Bayern München": ["FC Bayern München", "Bayern Munich"],
+    "Paris Saint-Germain": ["Paris Saint Germain", "PSG"],
+    "Atlético de Madrid": ["Atletico Madrid"],
+    "Tottenham Hotspur": ["Tottenham", "Spurs"],
+    "Manchester City": ["Man City", "Manchester City FC"],
+    "Real Madrid": ["Real Madrid CF"],
+    "Arsenal": ["Arsenal FC"],
+    "Juventus": ["Juventus FC"],
+}
+
 # --------------------------
 # UTILIDADES
 # --------------------------
 def norm(s: str) -> str:
     return re.sub(r"\W+", "", s).lower() if isinstance(s, str) else ""
 
-def best_match(name: str, choices: List[str]) -> Tuple[Optional[str], int]:
-    """Mejor coincidencia: usa rapidfuzz si está, si no hace substring matching."""
+def best_match(name: str, choices: List[str], cutoff: int = 60) -> Tuple[Optional[str], int]:
+    """Devuelve (mejor_coincidencia, score) usando rapidfuzz o matching simple."""
     if process is None:
         n = norm(name)
         for c in choices:
-            if n == norm(c):
-                return c, 100
             if n in norm(c) or norm(c) in n:
-                return c, 90
-        return None, 0
+                return (c, 100)
+        return (None, 0)
     match = process.extractOne(name, choices, scorer=fuzz.token_sort_ratio)
     if match:
         candidate, score, _ = match
-        return candidate, int(score)
-    return None, 0
+        return (candidate, int(score))
+    return (None, 0)
 
 # --------------------------
-# OBTENER STANDINGS (API)
+# OBTENER STANDINGS vía API
 # --------------------------
-@st.cache_data(ttl=300)
 def obtener_standings_api(api_key: str) -> pd.DataFrame:
-    """Obtiene tabla completa (Team, PJ, PG, PE, PP, GF, GC, GD, Pts) desde football-data.org"""
     url = f"https://api.football-data.org/v4/competitions/{COMPETITION_ID}/standings"
     headers = {"X-Auth-Token": api_key}
     r = requests.get(url, headers=headers, timeout=15)
@@ -91,134 +94,147 @@ def obtener_standings_api(api_key: str) -> pd.DataFrame:
     data = r.json()
     rows = []
     for group in data.get("standings", []):
-        group_name = group.get("group", "")
         for entry in group.get("table", []):
-            t = entry["team"]
+            team_name = entry["team"]["name"]
+            pts = entry.get("points", 0)
+            gf = entry.get("goalsFor", 0)
+            ga = entry.get("goalsAgainst", 0)
+            diff = gf - ga
             rows.append({
-                "Grupo": group_name,
-                "Team": t["name"],
+                "Team": team_name,
                 "PJ": entry.get("playedGames", 0),
                 "PG": entry.get("won", 0),
                 "PE": entry.get("draw", 0),
                 "PP": entry.get("lost", 0),
-                "GF": entry.get("goalsFor", 0),
-                "GC": entry.get("goalsAgainst", 0),
-                "Dif. Goles": entry.get("goalDifference", 0),
-                "Pts": entry.get("points", 0)
+                "GF": gf,
+                "GC": ga,
+                "Dif. Goles": diff,
+                "Pts": int(pts)
             })
     df = pd.DataFrame(rows).drop_duplicates(subset=["Team"]).reset_index(drop=True)
     return df
 
 # --------------------------
-# FALLBACK: ejemplo (cuando API falla)
+# FALLBACK: datos de ejemplo
 # --------------------------
-def ejemplo_standings_full() -> pd.DataFrame:
-    """Fallback: crea filas mínimas con columnas completas para los equipos elegidos (0s)."""
-    rows = []
-    for team in EQUIPOS_ELEGIDOS:
-        rows.append({
-            "Grupo": "",
-            "Team": team,
-            "PJ": 0,
-            "PG": 0,
-            "PE": 0,
-            "PP": 0,
-            "GF": 0,
-            "GC": 0,
-            "Dif. Goles": 0,
-            "Pts": 0
-        })
-    return pd.DataFrame(rows)
+def ejemplo_standings() -> pd.DataFrame:
+    data = [
+        {"Team": "Manchester City", "Pts": 13, "Dif. Goles": 8},
+        {"Team": "Paris Saint-Germain", "Pts": 12, "Dif. Goles": 7},
+        {"Team": "Real Madrid", "Pts": 12, "Dif. Goles": 6},
+        {"Team": "Bayern München", "Pts": 11, "Dif. Goles": 9},
+        {"Team": "Arsenal", "Pts": 11, "Dif. Goles": 5},
+        {"Team": "Napoli", "Pts": 10, "Dif. Goles": 3},
+        {"Team": "Borussia Dortmund", "Pts": 10, "Dif. Goles": 4},
+        {"Team": "Liverpool", "Pts": 10, "Dif. Goles": 6},
+        {"Team": "Inter", "Pts": 9, "Dif. Goles": 2},
+        {"Team": "Benfica", "Pts": 9, "Dif. Goles": 2},
+        {"Team": "Atlético de Madrid", "Pts": 8, "Dif. Goles": 1},
+        {"Team": "Barcelona", "Pts": 8, "Dif. Goles": 0},
+        {"Team": "Juventus", "Pts": 7, "Dif. Goles": 1},
+        {"Team": "Marseille", "Pts": 6, "Dif. Goles": -1},
+        {"Team": "Newcastle United", "Pts": 5, "Dif. Goles": -2},
+        {"Team": "Eintracht Frankfurt", "Pts": 4, "Dif. Goles": -3},
+        {"Team": "Chelsea", "Pts": 4, "Dif. Goles": -2},
+        {"Team": "Tottenham Hotspur", "Pts": 3, "Dif. Goles": -4},
+        {"Team": "Atalanta", "Pts": 2, "Dif. Goles": -5},
+        {"Team": "Galatasaray", "Pts": 1, "Dif. Goles": -6}
+    ]
+    return pd.DataFrame(data)
 
 # --------------------------
-# PREPARAR TABLA FILTRADA (garantiza que aparezcan todos los elegidos)
+# CÁLCULO RANKING POR PERSONA
 # --------------------------
-def preparar_tabla_mostrada(standings_df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Toma el DataFrame obtenido de la API y:
-    - Mapea/normaliza los nombres devueltos por la API hacia los nombres de EQUIPOS_ELEGIDOS
-      usando best_match (para que la tabla muestre los nombres elegidos).
-    - Añade filas con ceros para equipos elegidos que no aparezcan en la API.
-    - Ordena por Pts -> Dif. Goles -> GF.
-    """
-    # Lista oficial que devolvió la API
-    official = standings_df["Team"].tolist() if not standings_df.empty else []
+def calcular_ranking(standings_df: pd.DataFrame, jugadores: Dict[str, List[str]]) -> Tuple[pd.DataFrame, List[str]]:
+    official_names = list(standings_df["Team"].astype(str))
+    lookup = {team: int(standings_df.loc[standings_df['Team'] == team, 'Pts'].values[0]) for team in official_names}
+    rows, corrections = [], []
 
-    # Resultado intermedio por equipo elegido
-    filas = []
-    for chosen in EQUIPOS_ELEGIDOS:
-        match_name, score = best_match(chosen, official)
-        if match_name and score >= 60:
-            # usar fila oficial pero renombrar la columna 'Team' a chosen para mostrar como tú lo pusiste
-            row = standings_df[standings_df["Team"] == match_name].iloc[0].to_dict()
-            # reemplazamos Team por chosen (mantenerás la etiqueta que esperas)
-            row["Team"] = chosen
-            filas.append(row)
-        else:
-            # no encontrado (agregamos fila vacía con ceros)
-            filas.append({
-                "Grupo": "",
-                "Team": chosen,
-                "PJ": 0,
-                "PG": 0,
-                "PE": 0,
-                "PP": 0,
-                "GF": 0,
-                "GC": 0,
-                "Dif. Goles": 0,
-                "Pts": 0
-            })
-
-    df = pd.DataFrame(filas)
-    # ordenar por Pts, Dif. Goles, GF desc
-    df = df.sort_values(by=["Pts", "Dif. Goles", "GF"], ascending=[False, False, False]).reset_index(drop=True)
-    return df
-
-# --------------------------
-# CALCULAR RANKING POR JUGADOR
-# --------------------------
-def calcular_ranking_por_jugador(tabla_mostrada: pd.DataFrame, jugadores: Dict[str, List[str]]) -> pd.DataFrame:
-    # build lookup por el nombre mostrado (Team = chosen name)
-    lookup = {row["Team"]: int(row["Pts"]) for _, row in tabla_mostrada.iterrows()}
-    rows = []
     for jugador, equipos in jugadores.items():
-        detalles = []
-        total = 0
-        for eq in equipos:
-            pts = lookup.get(eq, 0)
-            detalles.append(f"{eq}: {pts} pts")
-            total += int(pts)
-        rows.append({"Jugador": jugador, "Equipos": " | ".join(detalles), "Total Pts": total})
-    df = pd.DataFrame(rows).sort_values(by="Total Pts", ascending=False).reset_index(drop=True)
-    return df
+        eq1, eq2 = equipos
+        found = []
+        for eq in [eq1, eq2]:
+            posibles = [eq] + ALIASES.get(eq, [])
+            best, score = None, 0
+            for p in posibles:
+                candidate, s = best_match(p, official_names)
+                if s > score:
+                    best, score = candidate, s
+            pts = lookup.get(best, 0) if best else 0
+            detalle = f"{best}: {pts} pts" if best else f"{eq}: ❌"
+            found.append((detalle, pts))
+            if best and score < 100:
+                corrections.append(f"'{eq}' → '{best}' ({score}%)")
+            elif not best:
+                corrections.append(f"No encontrado: {eq}")
+
+        total = found[0][1] + found[1][1]
+        rows.append({
+            "Jugador": jugador,
+            "Equipo 1": found[0][0],
+            "Equipo 2": found[1][0],
+            "Total Pts": total
+        })
+
+    df = pd.DataFrame(rows).sort_values("Total Pts", ascending=False).reset_index(drop=True)
+    return df, corrections
 
 # --------------------------
-# STREAMLIT UI (única página)
+# INTERFAZ STREAMLIT
+# --------------------------
+def run_streamlit(standings_df: pd.DataFrame, ranking_df: pd.DataFrame, corrections: List[str]) -> None:
+    st.set_page_config(page_title="Polla Champions", page_icon="🏆", layout="wide")
+    st.markdown("<h1 style='margin-bottom:0.2rem;'>🏆 Polla Champions League — Puntajes en vivo</h1>", unsafe_allow_html=True)
+
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        st.subheader("📋 Tabla de posiciones (equipos)")
+        st.dataframe(standings_df.sort_values(["Pts", "Dif. Goles"], ascending=[False, False]).reset_index(drop=True), use_container_width=True)
+    with col2:
+        st.subheader("🏅 Ranking de la polla (por persona)")
+        st.dataframe(ranking_df, use_container_width=True)
+
+    if corrections:
+        st.markdown("---")
+        st.subheader("🛠️ Ajustes automáticos / Avisos")
+        for c in corrections:
+            st.write("• " + c)
+
+# --------------------------
+# MAIN
 # --------------------------
 def main():
-    st.title("🏆 Polla Champions League — Puntajes en vivo")
-    st.caption("Fuente: football-data.org (UEFA standings). Orden: Pts → Dif. Goles → GF")
-
-    # intentar obtener de la API; si falla, usaremos fallback
+    global API_KEY
+    standings_df, corrections = None, []
     try:
-        if not API_KEY:
-            raise Exception("API key no configurada.")
-        raw_df = obtener_standings_api(API_KEY)
+        standings_df = obtener_standings_api(API_KEY) if API_KEY else ejemplo_standings()
     except Exception as e:
-        st.warning(f"No se pudieron obtener standings desde la API: {e} — usando fallback con ceros.")
-        raw_df = ejemplo_standings_full()
+        print(f"Error API: {e}")
+        standings_df = ejemplo_standings()
 
-    # preparar tabla que se mostrará (garantiza todos los elegidos)
-    tabla_mostrada = preparar_tabla_mostrada(raw_df)
+    # Filtrar solo los equipos elegidos
+    equipos_elegidos = sorted({e for lista in JUGADORES.values() for e in lista})
+    oficiales = standings_df["Team"].tolist()
+    equipos_filtrados = []
 
-    # mostrar tabla de posiciones (solo equipos elegidos)
-    st.subheader("📋 Tabla de posiciones (equipos elegidos)")
-    st.dataframe(tabla_mostrada, use_container_width=True)
+    for e in equipos_elegidos:
+        posibles = [e] + ALIASES.get(e, [])
+        match, score = None, 0
+        for p in posibles:
+            candidate, s = best_match(p, oficiales)
+            if s > score:
+                match, score = candidate, s
+        if match and score > 55:
+            equipos_filtrados.append(match)
 
-    # calcular y mostrar ranking por persona
-    ranking_df = calcular_ranking_por_jugador(tabla_mostrada, JUGADORES)
-    st.subheader("👥 Puntajes por jugador")
-    st.dataframe(ranking_df, use_container_width=True)
+    standings_df = standings_df[standings_df["Team"].isin(equipos_filtrados)].reset_index(drop=True)
+
+    ranking_df, corrections = calcular_ranking(standings_df, JUGADORES)
+
+    if USE_STREAMLIT and st is not None:
+        run_streamlit(standings_df, ranking_df, corrections)
+    else:
+        print(ranking_df)
 
 if __name__ == "__main__":
     main()
