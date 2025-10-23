@@ -147,7 +147,7 @@ def ejemplo_standings() -> pd.DataFrame:
 # --------------------------
 def calcular_ranking(standings_df: pd.DataFrame, jugadores: Dict[str, List[str]]) -> Tuple[pd.DataFrame, List[str]]:
     official_names = list(standings_df["Team"].astype(str))
-    lookup = {team: int(standings_df.loc[standings_df['Team'] == team, 'Pts'].values[1]) for team in official_names}
+    lookup = {team: int(standings_df.loc[standings_df['Team'] == team, 'Pts'].values[0]) for team in official_names}
     rows, corrections = [], []
 
     for jugador, equipos in jugadores.items():
