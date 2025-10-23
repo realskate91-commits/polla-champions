@@ -200,9 +200,8 @@ def run_streamlit(standings_df: pd.DataFrame, ranking_df: pd.DataFrame, correcti
     with col1:
         st.subheader("📋 Tabla de posiciones (equipos)")
         st.dataframe(
-            standings_df.sort_values("Pts", ascending=False).reset_index(drop=True), use_container_width=True)
-        st.dataframe(
-            ranking_df.reset_index(drop=True), use_container_width=True),
+            standings_display.sort_values(["Pts", "Dif. Goles"], ascending=[False, False]),
+            use_container_width=True,
             height=400
         )
     with col2:
