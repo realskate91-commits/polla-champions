@@ -194,11 +194,11 @@ def run_streamlit(standings_df: pd.DataFrame, ranking_df: pd.DataFrame, correcti
         st.subheader("🏅 Ranking de la polla (por persona)")
         st.dataframe(ranking_df, use_container_width=True)
 
-    if corrections:
-        st.markdown("---")
-        st.subheader("🛠️ Ajustes automáticos / Avisos")
-        for c in corrections:
-            st.write("• " + c)
+   # if corrections:
+   #     st.markdown("---")
+   #     st.subheader("🛠️ Ajustes automáticos / Avisos")
+   #     for c in corrections:
+   #         st.write("• " + c)
 
 # --------------------------
 # MAIN
