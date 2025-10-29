@@ -92,53 +92,112 @@ def best_match(name: str, choices: List[str], cutoff: int = 60) -> Tuple[Optiona
 # OBTENER STANDINGS vía API (mejorado con diagnóstico)
 # --------------------------
 def obtener_standings_api(api_key: str) -> pd.DataFrame:
+    """
+    Versión de diagnóstico:
+      - Imprime headers HTTP
+      - Muestra la estructura 'standings' devuelta por la API
+      - Prioriza standings de tipo 'TOTAL' si existen
+      - Si no, concatena todas las 'table' encontradas en cualquier standing
+    """
     if not api_key:
         raise Exception("No se ha configurado la API key. Verifica tu archivo secrets.toml o asigna la clave directamente.")
 
     url = f"https://api.football-data.org/v4/competitions/{COMPETITION_ID}/standings"
     headers = {"X-Auth-Token": api_key}
-    r = requests.get(url, headers=headers, timeout=15)
+    r = requests.get(url, headers=headers, timeout=20)
 
-    print(f"📡 Consultando API Football-Data... Estado HTTP: {r.status_code}")
+    # --- DIAGNÓSTICO BÁSICO ---
+    print("📡 Consultando API Football-Data... Estado HTTP:", r.status_code)
+    print("→ Encabezados relevantes:")
+    for k in ["X-API-Version", "X-Authenticated-Client", "X-RequestCounter-Reset", "X-RequestsAvailable"]:
+        if k in r.headers:
+            print(f"   {k}: {r.headers.get(k)}")
+    # Muestra los primeros 2000 chars de la respuesta (para no saturar)
+    body_preview = r.text[:2000].replace("\n", " ")
+    print("→ Preview respuesta (primeros 2000 chars):", body_preview[:1000])
 
     if r.status_code != 200:
-        print(f"❌ Error en la API: {r.text[:300]}")
+        # si hay cuerpo JSON explicando el error, mostrarlo acotado
+        try:
+            err = r.json()
+            print("❌ Cuerpo error (recortado):", str(err)[:1000])
+        except Exception:
+            print("❌ No hay JSON en la respuesta de error.")
         raise Exception(f"HTTP {r.status_code}: {r.text}")
 
     data = r.json()
 
-    if "standings" not in data or not data["standings"]:
-        print("⚠️ La API respondió correctamente pero sin datos de standings.")
-        print("Contenido parcial:", str(data)[:400])
-        raise Exception("Respuesta sin standings")
+    # Mostrar estructura de 'standings' para diagnóstico
+    standings_raw = data.get("standings")
+    if standings_raw is None:
+        print("⚠️ La respuesta NO contiene la clave 'standings'. Claves devueltas:", list(data.keys()))
+        raise Exception("Respuesta sin 'standings'")
 
-    rows = []
-    for group in data.get("standings", []):
-        for entry in group.get("table", []):
+    print(f"ℹ️ 'standings' contiene {len(standings_raw)} entradas.")
+    for i, s in enumerate(standings_raw):
+        stype = s.get("type", "<sin tipo>")
+        stage = s.get("stage", "<sin stage>")
+        group = s.get("group", None)
+        table_len = len(s.get("table", [])) if s.get("table") else 0
+        print(f"  - entrada {i}: type={stype}, stage={stage}, group={group}, rows={table_len}")
+
+    # 1) Intentar buscar el standing de tipo TOTAL (tabla agregada)
+    total_candidates = [s for s in standings_raw if s.get("type", "").upper() == "TOTAL"]
+    if total_candidates:
+        print("🔎 Se encontró al menos un 'TOTAL' — usaremos la primera entrada TOTAL.")
+        chosen = total_candidates[0]
+        rows_src = chosen.get("table", [])
+        rows = []
+        for entry in rows_src:
             team_name = entry["team"]["name"]
             pts = entry.get("points", 0)
             gf = entry.get("goalsFor", 0)
             ga = entry.get("goalsAgainst", 0)
             diff = gf - ga
-            rows.append(
-                {
-                    "Team": team_name,
-                    "PJ": entry.get("playedGames", 0),
-                    "PG": entry.get("won", 0),
-                    "PE": entry.get("draw", 0),
-                    "PP": entry.get("lost", 0),
-                    "GF": gf,
-                    "GC": ga,
-                    "Dif. Goles": diff,
-                    "Pts": int(pts),
-                }
-            )
+            rows.append({
+                "Team": team_name,
+                "PJ": entry.get("playedGames", 0),
+                "PG": entry.get("won", 0),
+                "PE": entry.get("draw", 0),
+                "PP": entry.get("lost", 0),
+                "GF": gf,
+                "GC": ga,
+                "Dif. Goles": diff,
+                "Pts": int(pts)
+            })
+        df = pd.DataFrame(rows).drop_duplicates(subset=["Team"]).reset_index(drop=True)
+        print(f"✅ Construida tabla desde 'TOTAL' con {len(df)} filas.")
+        return df
 
-    df = pd.DataFrame(rows).drop_duplicates(subset=["Team"]).reset_index(drop=True)
+    # 2) Si no hay 'TOTAL', aplanar todas las tablas (GROUP / HOME / AWAY)
+    print("🔎 No se encontró 'TOTAL'. Se van a concatenar todas las 'table' disponibles (GROUP/HOME/AWAY).")
+    rows_all = []
+    for s in standings_raw:
+        table = s.get("table", []) or []
+        for entry in table:
+            team_name = entry["team"]["name"]
+            pts = entry.get("points", 0)
+            gf = entry.get("goalsFor", 0)
+            ga = entry.get("goalsAgainst", 0)
+            diff = gf - ga
+            rows_all.append({
+                "Team": team_name,
+                "PJ": entry.get("playedGames", 0),
+                "PG": entry.get("won", 0),
+                "PE": entry.get("draw", 0),
+                "PP": entry.get("lost", 0),
+                "GF": gf,
+                "GC": ga,
+                "Dif. Goles": diff,
+                "Pts": int(pts)
+            })
+    if not rows_all:
+        print("⚠️ No se encontraron filas en ninguna 'table'. Contenido 'standings' (recortado):", str(standings_raw)[:2000])
+        raise Exception("No se obtuvieron rows de standings")
 
-    print(f"✅ Datos reales cargados correctamente ({len(df)} equipos)")
-    return df
-
+    df_all = pd.DataFrame(rows_all).drop_duplicates(subset=["Team"]).reset_index(drop=True)
+    print(f"✅ Construida tabla concatenada con {len(df_all)} filas (tras drop_duplicates).")
+    return df_all
 
 # --------------------------
 # FALLBACK: datos de ejemplo
