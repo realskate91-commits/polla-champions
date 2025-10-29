@@ -310,7 +310,7 @@ def main():
 
     try:
         if not API_KEY:
-            API_KEY = "TU_API_KEY_AQUI"  # Asigna tu clave manualmente si no usas secrets.toml
+            API_KEY = "b9bd06dcfcd84b9781783e84613c76f5"  # Asigna tu clave manualmente si no usas secrets.toml
             print("⚠️ Usando API_KEY definida manualmente (modo consola).")
 
         standings_df = obtener_standings_api(API_KEY)
